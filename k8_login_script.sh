@@ -4,7 +4,7 @@
 ###     Kubernetes log-in script     ###
 ###     Author: Brian Meyer (DCHBX)  ###
 ###     Created: 6/5/2022            ###
-###     Last Updated: 10/10/2024     ###
+###     Last Updated: 02/28/2025     ###
 ########################################
 # 2022-12-06: Added additional lower environments and cleaned up spacing, comments, etc.
 # This script will log into k8 instances of EA or GDB using bash or irb
@@ -17,6 +17,10 @@
 #				"while true" statements for error handling
 #				using variable to execute command instead of exec
 #				...and many more tweaks and updates.
+# 2025-02-28: Another major update, moving to version 2.5 including:
+#				rewrote entire ending sequence to make it easier to read
+#				Also made ending a single if statement 
+#				Fixed PreProd command creation
 #######################################################################################
 
 # color variables
@@ -55,6 +59,8 @@ printf "${GREEN}
      / /  |       |       |
  ___/ /   |       |       |
 |____/    c_c_c_C/ \\C_c_c_c
+
+version 2.5
 ${NC}"
 #######################################################################################
 
@@ -116,7 +122,7 @@ printf "\n\n${CYAN}System Choice:
 	3 - No filtering
 	-----------${NC}\n"
 
-# Read the system choice from the user
+# Read the system choice 
 read -p "System: " system_choice
 
 # Pod filtering logic based on the system choice
@@ -136,11 +142,13 @@ case "$system_choice" in
 				filtered_pods=$(kubectl -n "$namespace" get pods | grep '^edidb-prod')
 				;;
 			"hbxit")
-				# Adjusted for HBX IT Glue, using a more flexible pattern
 				printf "${GREEN}Listing Glue DB pods...${NC}\n"
 				filtered_pods=$(kubectl -n "$namespace" get pods | grep '^edidb-hbxit')
 				;;
-			# All pvt environments follow the same pattern (e.g., pvt, pvt-2, etc.)
+			"preprod")
+				printf "${GREEN}Listing Glue DB pods...${NC}\n"
+				filtered_pods=$(kubectl -n "$namespace" get pods | grep '^edidb-preprod')
+				;;	
 			"pvt"|"pvt-2"|"pvt-3"|"pvt-4"|"pvt-5")
 				printf "${GREEN}Listing Glue pods starting with 'edidb-$namespace'...${NC}\n"
 				filtered_pods=$(kubectl -n "$namespace" get pods | grep "^edidb-$namespace")
@@ -157,7 +165,6 @@ case "$system_choice" in
 		filtered_pods=$(kubectl -n "$namespace" get pods)
 		;;
 	*)
-		# Invalid input, print an error message
 		printf "${RED}Invalid system choice. Please select a valid option.${NC}\n"
 		exit 1
 		;;
@@ -180,9 +187,6 @@ printf "${GREEN}
 ${NC}\n"
 
 read -p "Pod: " podname
-
-#printf "		Pod $podname selected\n"
-
 ##############################  Choose Console Section  ##############################
 
 printf "${CYAN}Console Type: 
@@ -257,22 +261,27 @@ echo "               Be careful, you must! ${NC}
 
 ##############################  Final Command Execution Section  ##############################
 
-# Determine the correct ending based on the system type (Enroll App or Glue)
-if [ "$system_choice" == "1" ]; then
-	# Enroll App, use -- bin/rails c
-	ending=" -- bin/rails c"
-elif [ "$system_choice" == "2" ]; then
-	# Glue, use -- rails c
-	ending=" -- rails c"
-fi
-
-# Build the final command based on the selected pod and console type
+# Determine the correct command based on namespace, system choice, and console type
 if [ "$namespace" == "preprod" ]; then
-	# Special case for preprod namespace
-	cmd="kubectl -n preprod exec -ti $podname --container enroll-deploy-tasks bundle exec rails c"
+	if [ "$system_choice" == "1" ] && [ "$type" == "1" ]; then
+		cmd="kubectl exec -ti $podname --container enroll-deploy-tasks -n preprod -- bin/rails c"  # Preprod, Enroll App, IRB
+	elif [ "$system_choice" == "1" ] && [ "$type" == "2" ]; then
+		cmd="kubectl exec -ti $podname --container enroll-deploy-tasks -n preprod -- bash"  # Preprod, Enroll App, Bash
+	elif [ "$system_choice" == "2" ] && [ "$type" == "1" ]; then
+		cmd="kubectl exec -ti $podname --container edidb -n $namespace  -- rails c"  # Preprod, Glue, IRB
+	elif [ "$system_choice" == "2" ] && [ "$type" == "2" ]; then
+		cmd="kubectl exec -ti $podname --container edidb -n $namespace  -- bash"  # Preprod, Glue, Bash
+	fi
 else
-	# General command for other namespaces, using the correct ending based on system choice
-	cmd="kubectl -n $namespace exec -ti $podname $ending"
+	if [ "$system_choice" == "1" ] && [ "$type" == "1" ]; then
+		cmd="kubectl -n $namespace exec -ti $podname  -- bin/rails c"  # Non-Preprod, Enroll App, IRB
+	elif [ "$system_choice" == "1" ] && [ "$type" == "2" ]; then
+		cmd="kubectl -n $namespace exec -ti $podname  -- bash"  # Non-Preprod, Enroll App, Bash
+	elif [ "$system_choice" == "2" ] && [ "$type" == "1" ]; then
+		cmd="kubectl exec -ti $podname --container edidb -n $namespace -- rails c"  # Non-Preprod, Glue, IRB
+	elif [ "$system_choice" == "2" ] && [ "$type" == "2" ]; then
+		cmd="kubectl exec -ti $podname --container edidb -n $namespace -- bash"  # Non-Preprod, Glue, Bash
+	fi
 fi
 
 # Show and execute the command
